@@ -8,7 +8,8 @@ export const pool = new Pool({
   max: 5,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 5000,
-  maxUses: 1000
+  maxUses: 1000,
+  keepAlive: true
 });
 
 pool.on('error', (err) => logger.error('PostgreSQL pool error', { error: err.message }));
@@ -50,4 +51,8 @@ export async function initDatabase() {
 
 export async function healthCheck() {
   await pool.query('SELECT 1');
+}
+
+export async function closeDatabase() {
+  await pool.end();
 }
