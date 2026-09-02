@@ -1,4 +1,4 @@
-import { SlashCommandBuilder, PermissionFlagsBits } from 'discord.js';
+import { SlashCommandBuilder, PermissionFlagsBits, ChannelType } from 'discord.js';
 import { joinVoiceChannel, getVoiceConnection } from '@discordjs/voice';
 import { getLeaderboard, getRank, xpForLevel } from './levels.js';
 import { addMapping, removeMapping, listMappings } from './reactionRoles.js';
@@ -13,13 +13,16 @@ export const commands = [
   new SlashCommandBuilder().setName('reactionrole').setDescription('Manage reaction roles.')
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles)
     .addSubcommand(s => s.setName('add').setDescription('Map a reaction on a message to a role.')
+      .addChannelOption(o => o.setName('channel').setDescription('Channel containing the target message.').addChannelTypes(ChannelType.GuildText).setRequired(true))
       .addStringOption(o => o.setName('message').setDescription('Target message ID.').setRequired(true))
-      .addStringOption(o => o.setName('emoji').setDescription('Emoji, including custom emoji ID format name:id.').setRequired(true))
+      .addStringOption(o => o.setName('emoji').setDescription('Unicode emoji or custom emoji name:id.').setRequired(true))
       .addRoleOption(o => o.setName('role').setDescription('Role to grant/remove.').setRequired(true)))
     .addSubcommand(s => s.setName('remove').setDescription('Remove a reaction-role mapping.')
+      .addChannelOption(o => o.setName('channel').setDescription('Channel containing the target message.').addChannelTypes(ChannelType.GuildText).setRequired(true))
       .addStringOption(o => o.setName('message').setDescription('Target message ID.').setRequired(true))
-      .addStringOption(o => o.setName('emoji').setDescription('Emoji key.').setRequired(true)))
+      .addStringOption(o => o.setName('emoji').setDescription('Unicode emoji or custom emoji name:id.').setRequired(true)))
     .addSubcommand(s => s.setName('list').setDescription('List mappings for a message.')
+      .addChannelOption(o => o.setName('channel').setDescription('Channel containing the target message.').addChannelTypes(ChannelType.GuildText).setRequired(true))
       .addStringOption(o => o.setName('message').setDescription('Target message ID.').setRequired(true)))
 ].map(c => c.toJSON());
 
@@ -31,9 +34,7 @@ function formatXp(rank) {
 export async function handleCommand(interaction) {
   if (!interaction.guild) return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
 
-  if (interaction.commandName === 'ping') {
-    return interaction.reply(`Pong — ${interaction.client.ws.ping}ms.`);
-  }
+  if (interaction.commandName === 'ping') return interaction.reply(`Pong — ${interaction.client.ws.ping}ms.`);
 
   if (interaction.commandName === 'rank') {
     const user = interaction.options.getUser('user') || interaction.user;
@@ -51,8 +52,7 @@ export async function handleCommand(interaction) {
   if (interaction.commandName === 'join') {
     const channel = interaction.member.voice.channel;
     if (!channel) return interaction.reply({ content: 'Join a voice channel first.', ephemeral: true });
-    const existing = getVoiceConnection(interaction.guildId);
-    existing?.destroy();
+    getVoiceConnection(interaction.guildId)?.destroy();
     joinVoiceChannel({ channelId: channel.id, guildId: interaction.guildId, adapterCreator: interaction.guild.voiceAdapterCreator, selfDeaf: true });
     return interaction.reply(`Joined **${channel.name}**.`);
   }
@@ -66,22 +66,29 @@ export async function handleCommand(interaction) {
 
   if (interaction.commandName === 'reactionrole') {
     const sub = interaction.options.getSubcommand();
+    const channel = interaction.options.getChannel('channel', true);
     const messageId = interaction.options.getString('message', true);
-    const emoji = interaction.options.getString('emoji', true);
-    const channel = interaction.channel;
     let message;
-    try { message = await channel.messages.fetch(messageId); } catch { return interaction.reply({ content: 'I could not fetch that message from this channel.', ephemeral: true }); }
+    try { message = await channel.messages.fetch(messageId); }
+    catch { return interaction.reply({ content: 'I could not fetch that message. Check the channel, message ID, and bot permissions.', ephemeral: true }); }
 
     if (sub === 'add') {
+      const emoji = interaction.options.getString('emoji', true);
       const role = interaction.options.getRole('role', true);
-      if (role.managed || role.position >= interaction.guild.members.me.roles.highest.position) {
+      const me = interaction.guild.members.me;
+      if (!me || role.managed || role.position >= me.roles.highest.position) {
         return interaction.reply({ content: 'That role cannot be managed by VDS. Put the bot role above it.', ephemeral: true });
       }
-      await addMapping(interaction.guildId, messageId, emoji, role.id);
-      try { await message.react(emoji); } catch { return interaction.reply({ content: 'Mapping saved, but I could not add that reaction. Check the emoji and permissions.', ephemeral: true }); }
-      return interaction.reply({ content: `Mapped ${emoji} → <@&${role.id}> on [that message].`, ephemeral: true });
+      try {
+        await message.react(emoji);
+        await addMapping(interaction.guildId, messageId, emoji, role.id);
+      } catch {
+        return interaction.reply({ content: 'I could not add that reaction. Check the emoji and channel permissions.', ephemeral: true });
+      }
+      return interaction.reply({ content: `Mapped ${emoji} → <@&${role.id}>.`, ephemeral: true });
     }
 
+    const emoji = interaction.options.getString('emoji', true);
     if (sub === 'remove') {
       await removeMapping(interaction.guildId, messageId, emoji);
       return interaction.reply({ content: `Removed ${emoji} from the reaction-role mapping.`, ephemeral: true });
