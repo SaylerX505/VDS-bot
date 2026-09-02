@@ -43,22 +43,25 @@ export async function awardMessageXp(guildId, userId) {
 }
 
 export async function flushXp() {
-  const dirty = [...cache.entries()].filter(([, state]) => state.dirty);
+  const dirty = [...cache.entries()].map(([k, state]) => ({ k, state, xp: state.xp, level: state.level })).filter(x => cache.get(x.k)?.dirty);
   if (!dirty.length) return;
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    for (const [k, state] of dirty) {
-      const [guildId, userId] = k.split(':');
+    for (const item of dirty) {
+      const [guildId, userId] = item.k.split(':');
       await client.query(`
         INSERT INTO guild_members (guild_id, user_id, xp, level)
         VALUES ($1, $2, $3, $4)
         ON CONFLICT (guild_id, user_id)
         DO UPDATE SET xp = EXCLUDED.xp, level = EXCLUDED.level, updated_at = NOW()
-      `, [guildId, userId, state.xp, state.level]);
-      state.dirty = false;
+      `, [guildId, userId, item.xp, item.level]);
     }
     await client.query('COMMIT');
+    for (const item of dirty) {
+      const current = cache.get(item.k);
+      if (current && current.xp === item.xp && current.level === item.level) current.dirty = false;
+    }
     logger.debug('Flushed XP cache', { users: dirty.length });
   } catch (error) {
     await client.query('ROLLBACK');
