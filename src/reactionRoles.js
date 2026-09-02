@@ -1,7 +1,21 @@
 import { pool } from './db.js';
 
+const cache = new Map();
+let loaded = false;
+
 export function emojiKey(reaction) {
   return reaction.emoji.id ? `${reaction.emoji.name}:${reaction.emoji.id}` : reaction.emoji.name;
+}
+
+export async function initReactionRoleCache() {
+  const { rows } = await pool.query('SELECT guild_id, message_id, emoji_key, role_id FROM reaction_roles');
+  cache.clear();
+  for (const row of rows) cache.set(`${row.guild_id}:${row.message_id}:${row.emoji_key}`, row.role_id);
+  loaded = true;
+}
+
+async function ensureLoaded() {
+  if (!loaded) await initReactionRoleCache();
 }
 
 export async function addMapping(guildId, messageId, emoji, roleId) {
@@ -11,6 +25,7 @@ export async function addMapping(guildId, messageId, emoji, roleId) {
     ON CONFLICT (guild_id, message_id, emoji_key)
     DO UPDATE SET role_id = EXCLUDED.role_id
   `, [guildId, messageId, emoji, roleId]);
+  cache.set(`${guildId}:${messageId}:${emoji}`, roleId);
 }
 
 export async function removeMapping(guildId, messageId, emoji) {
@@ -18,20 +33,18 @@ export async function removeMapping(guildId, messageId, emoji) {
     'DELETE FROM reaction_roles WHERE guild_id = $1 AND message_id = $2 AND emoji_key = $3',
     [guildId, messageId, emoji]
   );
+  cache.delete(`${guildId}:${messageId}:${emoji}`);
 }
 
 export async function getMapping(guildId, messageId, emoji) {
-  const { rows } = await pool.query(
-    'SELECT role_id FROM reaction_roles WHERE guild_id = $1 AND message_id = $2 AND emoji_key = $3',
-    [guildId, messageId, emoji]
-  );
-  return rows[0]?.role_id ?? null;
+  await ensureLoaded();
+  return cache.get(`${guildId}:${messageId}:${emoji}`) ?? null;
 }
 
 export async function listMappings(guildId, messageId) {
-  const { rows } = await pool.query(
-    'SELECT emoji_key, role_id FROM reaction_roles WHERE guild_id = $1 AND message_id = $2 ORDER BY emoji_key',
-    [guildId, messageId]
-  );
-  return rows;
+  await ensureLoaded();
+  const prefix = `${guildId}:${messageId}:`;
+  return [...cache.entries()]
+    .filter(([key]) => key.startsWith(prefix))
+    .map(([key, role_id]) => ({ emoji_key: key.slice(prefix.length), role_id }));
 }
