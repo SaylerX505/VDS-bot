@@ -2,7 +2,7 @@ import { Client, GatewayIntentBits, Partials } from 'discord.js';
 import { config } from './config.js';
 import { initDatabase, pool } from './db.js';
 import { awardMessageXp, flushXp, shutdownLevels } from './levels.js';
-import { emojiKey, getMapping } from './reactionRoles.js';
+import { emojiKey, getMapping, initReactionRoleCache } from './reactionRoles.js';
 import { handleCommand } from './commands.js';
 import { logger } from './logger.js';
 
@@ -87,6 +87,7 @@ process.on('unhandledRejection', (error) => logger.error('Unhandled rejection', 
 process.on('uncaughtException', (error) => logger.error('Uncaught exception', { error: error.message, stack: error.stack }));
 
 await initDatabase();
+await initReactionRoleCache();
 xpFlushTimer = setInterval(() => flushXp().catch(error => logger.error('Scheduled XP flush failed', { error: error.message })), config.xpFlushIntervalMs);
 xpFlushTimer.unref();
 await client.login(config.token);
