@@ -3,34 +3,25 @@ import { config } from './config.js';
 import { initDatabase, pool } from './db.js';
 import { awardMessageXp, flushXp, shutdownLevels } from './levels.js';
 import { emojiKey, getMapping, initReactionRoleCache } from './reactionRoles.js';
-import { handleCommand } from './commands.js';
+import { handleCommand, autocompleteReactionRole } from './commands.js';
 import { logger } from './logger.js';
 
 const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.GuildMessageReactions,
-    GatewayIntentBits.GuildVoiceStates
-  ],
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.GuildMessageReactions, GatewayIntentBits.GuildVoiceStates],
   partials: [Partials.Message, Partials.Channel, Partials.Reaction]
 });
 
 let xpFlushTimer;
 let shuttingDown = false;
 
-client.once('ready', () => {
-  logger.info('VDS is online', { tag: client.user.tag, guilds: client.guilds.cache.size });
-});
+client.once('ready', () => logger.info('VDS is online', { tag: client.user.tag, guilds: client.guilds.cache.size }));
 
 client.on('messageCreate', async (message) => {
   if (!message.guild || message.author.bot) return;
   try {
     const levelUp = await awardMessageXp(message.guild.id, message.author.id);
     if (levelUp) logger.debug('Member leveled up', { guildId: message.guild.id, userId: message.author.id, level: levelUp.level });
-  } catch (error) {
-    logger.error('Message XP processing failed', { error: error.message, guildId: message.guild.id });
-  }
+  } catch (error) { logger.error('Message XP processing failed', { error: error.message, guildId: message.guild.id }); }
 });
 
 async function handleReaction(reaction, user, adding) {
@@ -44,28 +35,26 @@ async function handleReaction(reaction, user, adding) {
     const member = await reaction.message.guild.members.fetch(user.id);
     const role = reaction.message.guild.roles.cache.get(roleId);
     const me = reaction.message.guild.members.me;
-    if (!role || !me) return;
-    if (role.managed || role.position >= me.roles.highest.position) {
-      logger.warn('Reaction role blocked by hierarchy', { guildId: reaction.message.guild.id, roleId });
-      return;
-    }
+    if (!role || !me || role.managed || role.position >= me.roles.highest.position) return;
     if (adding) await member.roles.add(role, 'VDS reaction role');
     else await member.roles.remove(role, 'VDS reaction role');
-  } catch (error) {
-    logger.error('Reaction role processing failed', { error: error.message });
-  }
+  } catch (error) { logger.error('Reaction role processing failed', { error: error.message }); }
 }
 
 client.on('messageReactionAdd', (reaction, user) => handleReaction(reaction, user, true));
 client.on('messageReactionRemove', (reaction, user) => handleReaction(reaction, user, false));
 
 client.on('interactionCreate', async (interaction) => {
-  if (!interaction.isChatInputCommand()) return;
   try {
+    if (interaction.isAutocomplete()) {
+      if (interaction.commandName === 'reactionrole') return autocompleteReactionRole(interaction);
+      return interaction.respond([]);
+    }
+    if (!interaction.isChatInputCommand()) return;
     await handleCommand(interaction);
   } catch (error) {
-    logger.error('Command failed', { command: interaction.commandName, error: error.message });
-    const response = { content: 'Something went wrong while processing that command.', ephemeral: true };
+    logger.error('Interaction failed', { command: interaction.commandName, error: error.message });
+    const response = { content: 'Something went wrong while processing that request.', ephemeral: true };
     if (interaction.replied || interaction.deferred) await interaction.followUp(response).catch(() => {});
     else await interaction.reply(response).catch(() => {});
   }
