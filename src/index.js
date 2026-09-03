@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits, Partials } from 'discord.js';
+import { Client, GatewayIntentBits, Partials, Events } from 'discord.js';
 import { config } from './config.js';
 import { initDatabase, pool, closeDatabase } from './db.js';
 import { announceLevelUp, awardMessageXp, awardVoiceXp, flushXp, shutdownLevels, syncLevelRewards } from './levels.js';
@@ -16,7 +16,7 @@ let xpFlushTimer;
 let voiceXpTimer;
 let shuttingDown = false;
 
-client.once('ready', () => {
+client.once(Events.ClientReady, () => {
   setReady(true);
   logger.info('VDS is online', { tag: client.user.tag, guilds: client.guilds.cache.size });
 });
